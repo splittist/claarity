@@ -6,5 +6,5 @@
 
 (defpackage #:com.splittist.claarity
   (:use #:cl)
-  (:local-nicknames)
+  (:local-nicknames (#:trackpalette #:com.splittist.trackpalette))
   (:export))
