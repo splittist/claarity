@@ -7,4 +7,6 @@
 (defpackage #:com.splittist.claarity
   (:use #:cl)
   (:local-nicknames (#:trackpalette #:com.splittist.trackpalette))
-  (:export))
+  (:export
+   #:report
+   #:*default-comment-template*))
