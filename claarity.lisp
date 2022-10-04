@@ -169,7 +169,11 @@
 
 (defun delete-out-of-band (root)
   (lquery:with-master-document (root)
-    (lquery:$ "w::subDoc,w::commentReference,w::footnoteReference,w::endnoteReference,w::contentPart,w::object"
+    (lquery:$ "w::subDoc"
+      (add "w::commentReference")
+      (add "w::footnoteReference,w::footnoteRef")
+      (add "w::endnoteReference,w::endnoteRef")
+      (add "w::contentPart,w::object")
               (remove))))
 
 (defun delete-separators (root)
@@ -235,7 +239,7 @@
 (defun blank-cell ()
   (plump:first-child (plump:parse "<w:tc><w:p/></w:tc>")))
 
-(defun md-annotations (paragraphs document &key commentsp footnotesp endnotesp)
+(defun extract-annotations (paragraphs document &key commentsp footnotesp endnotesp)
   (let* ((comment-part (docxplora:comments document))
 	 (comment-root (and comment-part (opc:xml-root comment-part)))
 	 (footnote-part (docxplora:footnotes document))
@@ -276,58 +280,91 @@
 	      (serapeum:do-each (child (plump:clone-children endnote))
 		(replace-endnote-refs child)
 		(plump:append-child tc child)))))
-	(when (alexandria:emptyp (plump:children tc))
-	  (setf tc (blank-cell)))
+	(setf tc (if (alexandria:emptyp (plump:children tc))
+		     (blank-cell)
+		     (process-paragraphs tc)))
 	(setf (aref result i) tc)))))
 
-(defun extract-items-of-interest (document &rest items
-				           &key commentsp footnotesp endnotesp
-					        revisionsp highlightingp square-brackets-p)
-  (let* ((md-root (opc:xml-root (docxplora:main-document document)))
-         (all-paras (docxplora::paragraphs-in-document-order md-root))
-         (annotations (md-annotations all-paras document
-				      :commentsp commentsp
-				      :footnotesp footnotesp
-				      :endnotesp endnotesp))
-         (formatted-numbers (docxplora::paragraph-formatted-numbers document all-paras))
-         (pages-and-sections (md-pages-and-sections all-paras))
-         (clone-root (plump:make-root))
-         (extracted-paras (mapcar
-                           (lambda (p)
-                             (when (apply #'paragraph-has-item-of-interest p items) 
-                               (let ((clone
-                                       (plump:append-child
-                                        clone-root
-                                        (plump:clone-node p t))))
-                                 (process-paragraphs
-				  (replace-annotation-references clone-root :commentsp commentsp
-								            :footnotesp footnotesp
-									    :endnotesp endnotesp))
-                                 clone)))
-                           all-paras)))
-    (map 'list #'list extracted-paras formatted-numbers pages-and-sections annotations)))
+(defun extract-paragraphs (paras &rest items
+			         &key commentsp footnotesp endnotesp
+			              revisionsp highlightingp square-brackets-p)
+  (let ((root (plump:make-root)))
+    (mapcar
+     (lambda (p)
+       (when (apply #'paragraph-has-item-of-interest p items) 
+	 (let ((clone
+		 (plump:append-child
+                  root
+                  (plump:clone-node p t))))
+           (process-paragraphs
+	    (replace-annotation-references root :commentsp commentsp
+						:footnotesp footnotesp
+						:endnotesp endnotesp))
+           clone)))
+     paras)))
+
+(defun md-reference-builder (document paras)
+  (let ((formatted-numbers (docxplora::paragraph-formatted-numbers document paras))
+	(pages-and-sections (md-pages-and-sections paras))
+	(current-number nil))
+    (loop for para in paras
+	  for number in formatted-numbers
+	  for page/section across pages-and-sections
+	  when number do (setf current-number number)
+	    collect (or number
+			current-number
+			(format nil "~C~D,~C~D"
+				#\Pilcrow_sign (car page/section)
+				#\Section_sign (cdr page/section))))))
+
+(defun simple-reference-builder (document paras)
+  (declare (ignore document))
+  (alexandria:iota (length paras) :start 1))
+
+(defun extract-items-of-interest-from-part (part document reference-builder
+					    &rest items
+					    &key commentsp footnotesp endnotesp
+					      revisionsp highlightingp square-brackets-p)
+  (let* ((root (opc:xml-root part))
+	 (all-paras (docxplora::paragraphs-in-document-order root))
+	 (annotations (extract-annotations all-paras document
+					   :commentsp commentsp
+					   :footnotesp footnotesp
+					   :endnotesp endnotesp))
+	 (extracted-paras (apply #'extract-paragraphs all-paras items))
+	 (references (funcall reference-builder document all-paras)))
+    (map 'list #'list extracted-paras references annotations)))
 
 (defun item-entries-to-arguments (item-entries)
-  (let ((arguments '())
-        (current-number nil))
+  (let ((arguments '()))
     (dolist (p item-entries (nreverse arguments))
-      (alexandria:when-let ((n (second p))) (setf current-number n))
       (when (first p)
-        (let ((reference (or (second p)
-                             current-number
-                             (format nil "~C~D,~C~D"
-                                     #\Pilcrow_sign (car (third p))
-                                     #\Section_sign (cdr (third p))))))
-          (push (list :reference reference
-                      :revision (plump:serialize (first p) nil)
-                      :comment (when (fourth p) (plump:serialize (fourth p) nil)))
-                arguments))))))
+        (push (list :reference (second p)
+                    :revision (plump:serialize (first p) nil)
+                    :comment (plump:serialize (third p) nil))
+              arguments)))))
 
 (defun collect-template-arguments-for-file (file &rest items
 					         &key revisionsp commentsp footnotesp endnotesp
 					              highlightingp square-brackets-p)
-  (let* ((indoc (docxplora:open-document file))
-	 (item-entries (apply #'extract-items-of-interest indoc items)))
+  (let* ((document (docxplora:open-document file))
+	 (md (docxplora:main-document document))
+	 (fn (docxplora:footnotes document))
+	 (en (docxplora:endnotes document))
+	 (hds (docxplora:headers document))
+	 (fts (docxplora:footers document))
+	 (md-entries (apply #'extract-items-of-interest-from-part md document #'md-reference-builder items))
+	 (fn-entries
+	   (and fn (apply #'extract-items-of-interest-from-part fn document #'simple-reference-builder items)))
+	 (en-entries
+	   (and en (apply #'extract-items-of-interest-from-part en document #'simple-reference-builder items)))
+	 (hd-entries
+	   (loop for hd in hds
+		 appending (apply #'extract-items-of-interest-from-part hd document #'simple-reference-builder items)))
+	 (ft-entries
+	   (loop for ft in fts
+		 appending (apply #'extract-items-of-interest-from-part ft document #'simple-reference-builder items)))
+	 (item-entries (append md-entries fn-entries en-entries hd-entries ft-entries)))
     (item-entries-to-arguments item-entries)))
 
 (defun collect-template-arguments (infiles &rest items
