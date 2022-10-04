@@ -9,30 +9,30 @@ the changes are displayed with formatting supplied by [trackpalette](https://git
 
 ## Usage
 
-*function* **REPORT** &key `infiles` `outfile` `arguments` `template`  `(revisionsp t)` `highlightingp` `square-brackets-p` `commentsp` `footnotesp` `endnotesp`
+*function* **REPORT** &key *infiles* *outfile* *arguments* *template*  *(revisionsp t)* *highlightingp* *square-brackets-p* *commentsp* *footnotesp* *endnotesp*
 
 Extracts paragraphs with items of interest
-from the files designated by `infiles` (a single path or a list of paths),
+from the files designated by *infiles* (a single path or a list of paths),
 passing them, together with the addtional template
-arguments in `arguments` (a list) to the docxdjula template designated by `template`,
-writing the result to `outfile`.
+arguments in *arguments* (a list) to the docxdjula template designated by *template*,
+writing the result to *outfile*.
 
-`template` defaults to `*default-comment-template*`.
+*template* defaults to `*default-comment-template*`.
 
-`outfile` defaults to the first pathname in `infiles` with "-com" appended to the pathname-name
+*outfile* defaults to the first pathname in *infiles* with "-com" appended to the pathname-name
 (i.e. before the extension).
 
-If `revisionsp` is not `NIL`, paragrpahs with tracked changes will be extracted, those tracked changes being styled by *trackpalette*.
+If *revisionsp* is true (the default), paragraphs with tracked changes will be extracted, those tracked changes being styled by **trackpalette**.
 
-If `highlightingp` is not `NIL`, paragraphs with [highlighting](https://support.microsoft.com/en-us/office/apply-or-remove-highlighting-1747d808-6db7-4d49-86ac-1f0c3cc87e2e) will be extracted.
+If *highlightingp* is true, paragraphs with [highlighting](https://support.microsoft.com/en-us/office/apply-or-remove-highlighting-1747d808-6db7-4d49-86ac-1f0c3cc87e2e) will be extracted.
 
-If `square-brackets-p` is not `NIL`, paragraphs with `#\\[` or `#\\]` will be extracted.
+If *square-brackets-p* is true, paragraphs with `#\[` or `#\]` will be extracted.
 
-If `commentsp` is not `NIL`, paragraphs with comments will be extracted, as will the text and the author of the associated comment(s).
+If *commentsp* is true, paragraphs with comments will be extracted, as will the text and the author of the associated comment(s).
 
-If `footnotesp` is not `NIL`, paragraphs with footnotes will be extracted, as will the corresponding text of the footnote.
+If *footnotesp* is true, paragraphs with footnotes will be extracted, as will the corresponding text of the footnote.
 
-If `endnotesp` is not `NIL`, paragraphs with endnotes will be extracted, as will the corresponding text of the endnote.
+If *endnotesp* is true, paragraphs with endnotes will be extracted, as will the corresponding text of the endnote.
 
 Note that the style of the extracted paragraphs will be simplified to improve the clarity of the report.
 
@@ -42,7 +42,7 @@ Set to the path of a file named "MultifileCommentTemplate.docx" in the "Template
 
 ## Templates
 
-The template will be passed a list of template arguments consisting of the arguments passed in as `arguments` to the `REPORT` function and and entry `:FILES`, consiting of one plist for each of the 'infiles` consisting of one entry (`:NAME`) for the `PATHNAME-NAME` of the `infile`, and one entry (`:ENTRIES`) containing a list of plists with `:REFERENCE`, `:REVISION` and `:COMMENT` entries, the values being a reference for the paragraph, the text of the paragraph, and the text of any comments, footnotes or endnotes if those items have been selected as being of interest.
+The template will be passed a list of template arguments consisting of the arguments passed in as *arguments* to the `REPORT` function and and entry `:FILES`, consiting of one plist for each of the *infiles* consisting of one entry (`:NAME`) for the `PATHNAME-NAME` of the `infile`, and one entry (`:ENTRIES`) containing a list of plists with `:REFERENCE`, `:REVISION` and `:COMMENT` entries, the values being a reference for the paragraph, the text of the paragraph, and the text of any comments, footnotes or endnotes if those items have been selected as being of interest.
 
 The template can, therefore, iterate through the files in `files`, and for each file refer to its `file.name` and the `file.entries`, each entry containing an `entry.reference`, `entry.revision` and (possibly blank) `entry.comment`.
 
