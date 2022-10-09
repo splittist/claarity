@@ -239,6 +239,9 @@
 (defun blank-cell ()
   (plump:first-child (plump:parse "<w:tc><w:p/></w:tc>")))
 
+(defun blank-cells (n)
+  (loop repeat n collect (blank-cell)))
+
 (defun extract-annotations (paragraphs document &key commentsp footnotesp endnotesp)
   (let* ((comment-part (docxplora:comments document))
 	 (comment-root (and comment-part (opc:xml-root comment-part)))
@@ -321,27 +324,113 @@
   (declare (ignore document))
   (alexandria:iota (length paras) :start 1))
 
-(defun extract-items-of-interest-from-part (part document reference-builder
-					    &rest items
-					    &key commentsp footnotesp endnotesp
-					      revisionsp highlightingp square-brackets-p)
-  (let* ((root (opc:xml-root part))
-	 (all-paras (docxplora::paragraphs-in-document-order root))
-	 (annotations (extract-annotations all-paras document
-					   :commentsp commentsp
-					   :footnotesp footnotesp
-					   :endnotesp endnotesp))
-	 (extracted-paras (apply #'extract-paragraphs all-paras items))
-	 (references (funcall reference-builder document all-paras)))
-    (map 'list #'list extracted-paras references annotations)))
+(defun footnote-paragraph-id (para)
+  (let ((footnote (docxplora:find-ancestor-element para "w:footnote")))
+    (when footnote
+      (plump:attribute footnote "w:id"))))
+
+(defun find-note-numbering-from-id (numbering id)
+  (first (find-if #'(lambda (ref) (equal id (plump:attribute ref "w:id")))
+		  numbering
+		  :key #'second)))
+
+(defun footnote-reference-builder (document paras)
+  (let ((numbering (docxplora:footnote-references-numbering document))
+	(ids (mapcar #'footnote-paragraph-id paras)))
+    (loop for id in ids
+	  for number = (find-note-numbering-from-id numbering id)
+	  collecting (format nil "fn ~A" number))))
+
+(defun endnote-paragraph-id (para)
+  (let ((endnote (docxplora:find-ancestor-element para "w:endnote")))
+    (when endnote
+      (plump:attribute endnote "w:id"))))
+
+(defun endnote-reference-builder (document paras)
+  (let ((numbering (docxplora:endnote-references-numbering document))
+	(ids (mapcar #'endnote-paragraph-id paras)))
+    (loop for id in ids
+	  for number = (find-note-numbering-from-id numbering id)
+	  collecting (format nil "en ~A" number))))
+
+(defun header-reference-builder (document header paras) ;; FIXME temp
+  (declare (ignore document header))
+  (loop repeat (length paras)
+	collecting "Header")))
+
+(defun footer-reference-builder (document footer paras) ;; FIXME temp
+  (declare (ignore document footer))
+  (loop repeat (length paras)
+	collecting "Footer"))
+
+(defun filter-for-interest (paragraphs &rest items &key &allow-other-keys)
+  (remove-if-not #'(lambda (p) (apply #'paragraph-has-item-of-interest p items))
+		 paragraphs))
+
+(defgeneric extract-items-of-interest-from-part (part document
+						 &rest items
+						 &key commentsp footnotesp endnotesp
+						   revisionsp highlightingp square-brackets-p)
+  (:method ((md docxplora:main-document) document
+	    &rest items
+	    &key commentsp footnotesp endnotesp
+	      revisionsp highlightingp square-brackets-p)
+    (let* ((root (opc:xml-root md))
+	   (all-paras (docxplora:paragraphs-in-document-order root))
+	   (annotations (extract-annotations all-paras document
+					     :commentsp commentsp
+					     :footnotesp footnotesp
+					     :endnotesp endnotesp))
+	   (extracted-paras (apply #'extract-paragraphs all-paras items))
+	   (references (md-reference-builder document all-paras)))
+      (map 'list #'list extracted-paras references annotations)))
+  (:method ((footnotes docxplora:footnotes) document
+	    &rest items
+	    &key &allow-other-keys)
+    (let* ((root (opc:xml-root footnotes))
+	   (all-paras (docxplora:paragraphs-in-document-order root))
+	   (interesting-paras (apply #'filter-for-interest all-paras items))
+	   (extracted-paras (remove-if #'null (apply #'extract-paragraphs all-paras items)))
+	   (references (footnote-reference-builder document interesting-paras)))
+      (map 'list #'list extracted-paras references)))
+  (:method ((endnotes docxplora:endnotes) document
+	    &rest items
+	    &key &allow-other-keys)
+    (let* ((root (opc:xml-root endnotes))
+	   (all-paras (docxplora:paragraphs-in-document-order root))
+	   (interesting-paras (apply #'filter-for-interest all-paras items))
+	   (extracted-paras (remove-if #'null (apply #'extract-paragraphs all-paras items)))
+	   (references (endnote-reference-builder document interesting-paras)))
+      (map 'list #'list extracted-paras references)))
+  (:method ((header docxplora:header) document
+	    &rest items
+	    &key &allow-other-keys)
+    (let* ((root (opc:xml-root header))
+	   (all-paras (docxplora:paragraphs-in-document-order root))
+	   (interesting-paras (apply #'filter-for-interest all-paras items))
+	   (extracted-paras (remove-if #'null (apply #'extract-paragraphs all-paras items)))
+	   (references (header-reference-builder document header interesting-paras)))
+      (map 'list #'list extracted-paras references)))
+  (:method ((footer docxplora:footer) document
+	    &rest items
+	    &key &allow-other-keys)
+    (let* ((root (opc:xml-root footer))
+	   (all-paras (docxplora:paragraphs-in-document-order root))
+	   (interesting-paras (apply #'filter-for-interest all-paras items))
+	   (extracted-paras (remove-if #'null (apply #'extract-paragraphs all-paras items)))
+	   (references (footer-reference-builder document footer interesting-paras)))
+      (map 'list #'list extracted-paras references))))
 
 (defun item-entries-to-arguments (item-entries)
   (let ((arguments '()))
     (dolist (p item-entries (nreverse arguments))
       (when (first p)
         (push (list :reference (second p)
-                    :revision (plump:serialize (first p) nil)
-                    :comment (plump:serialize (third p) nil))
+                    :revision (plump:serialize (first p) nil) ;; FIXME change to :paragraph
+                    :comment (plump:serialize (alexandria:if-let ((it (third p))) ;; FIXME change to annotation
+						it
+						(blank-cell))
+					      nil))
               arguments)))))
 
 (defun collect-template-arguments-for-file (file &rest items
@@ -353,17 +442,17 @@
 	 (en (docxplora:endnotes document))
 	 (hds (docxplora:headers document))
 	 (fts (docxplora:footers document))
-	 (md-entries (apply #'extract-items-of-interest-from-part md document #'md-reference-builder items))
+	 (md-entries (apply #'extract-items-of-interest-from-part md document items))
 	 (fn-entries
-	   (and fn (apply #'extract-items-of-interest-from-part fn document #'simple-reference-builder items)))
+	   (and fn (apply #'extract-items-of-interest-from-part fn document items)))
 	 (en-entries
-	   (and en (apply #'extract-items-of-interest-from-part en document #'simple-reference-builder items)))
+	   (and en (apply #'extract-items-of-interest-from-part en document items)))
 	 (hd-entries
 	   (loop for hd in hds
-		 appending (apply #'extract-items-of-interest-from-part hd document #'simple-reference-builder items)))
+		 appending (apply #'extract-items-of-interest-from-part hd document items)))
 	 (ft-entries
 	   (loop for ft in fts
-		 appending (apply #'extract-items-of-interest-from-part ft document #'simple-reference-builder items)))
+		 appending (apply #'extract-items-of-interest-from-part ft document items)))
 	 (item-entries (append md-entries fn-entries en-entries hd-entries ft-entries)))
     (item-entries-to-arguments item-entries)))
 
