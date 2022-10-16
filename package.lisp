@@ -9,4 +9,12 @@
   (:local-nicknames (#:trackpalette #:com.splittist.trackpalette))
   (:export
    #:report
-   #:*default-comment-template*))
+   #:*format*
+   #:wml
+   #:html
+   #:*default-docxdjula-template*
+   #:*default-djula-template*
+   #:*outfile-name-generator*
+   #:apply-template
+   #:process-paragraph-for-format
+   #:process-annotation-for-format))

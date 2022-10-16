@@ -284,7 +284,7 @@
 		(replace-endnote-refs child)
 		(plump:append-child tc child)))))
 	(setf tc (if (alexandria:emptyp (plump:children tc))
-		     (blank-cell)
+		     nil
 		     (process-paragraphs tc)))
 	(setf (aref result i) tc)))))
 
@@ -356,7 +356,7 @@
 (defun header-reference-builder (document header paras) ;; FIXME temp
   (declare (ignore document header))
   (loop repeat (length paras)
-	collecting "Header")))
+	collecting "Header"))
 
 (defun footer-reference-builder (document footer paras) ;; FIXME temp
   (declare (ignore document footer))
@@ -426,11 +426,8 @@
     (dolist (p item-entries (nreverse arguments))
       (when (first p)
         (push (list :reference (second p)
-                    :revision (plump:serialize (first p) nil) ;; FIXME change to :paragraph
-                    :comment (plump:serialize (alexandria:if-let ((it (third p))) ;; FIXME change to annotation
-						it
-						(blank-cell))
-					      nil))
+                    :paragraph (process-paragraph-for-format *format* (first p))
+                    :annotation (process-annotation-for-format *format* (third p)))
               arguments)))))
 
 (defun collect-template-arguments-for-file (file &rest items
@@ -464,21 +461,50 @@
         (list :name (pathname-name infile)
               :entries (apply #'collect-template-arguments-for-file infile items))))
 
+(defparameter *default-docxdjula-template*
+  (asdf:system-relative-pathname "claarity" "templates/MultifileCommentTemplate.docx"))
+
 (defun apply-docxdjula-template (&key template-arguments template outfile)
   (let ((djula:*current-compiler* (make-instance 'docxdjula:docx-compiler))
 	(djula:*current-store* (make-instance 'docxdjula::docx-file-store)))
     (djula:add-template-directory
-     (uiop:pathname-directory-pathname (or template *default-comment-template*)))
+     (uiop:pathname-directory-pathname (or template *default-docxdjula-template*)))
     (let ((template (djula:compile-template*
-		     (file-namestring (or template *default-comment-template*))))
+		     (file-namestring (or template *default-docxdjula-template*))))
 	  (djula::*template-arguments* template-arguments))
       (funcall template outfile))))
 
-(defparameter *default-comment-template* (asdf:system-relative-pathname "claarity" "templates/MultifileCommentTemplate.docx"))
+(defparameter *default-djula-template*
+  (asdf:system-relative-pathname "claarity" "templates/MultifileCommentTemplate.html"))
+
+(defun apply-djula-template (&key template-arguments template outfile)
+  (djula:add-template-directory
+   (uiop:pathname-directory-pathname (or template *default-djula-template*)))
+  (with-open-file (out outfile :direction :output :if-exists :supersede)
+    (let ((template (djula:compile-template*
+		     (file-namestring (or template *default-djula-template*)))))
+      (apply #'djula:render-template* template out template-arguments))))
+
+(defgeneric apply-template (format &rest args &key &allow-other-keys)
+  (:method ((format (eql 'wml)) &rest args &key &allow-other-keys)
+    (apply #'apply-docxdjula-template args))
+  (:method ((format (eql 'html)) &rest args &key &allow-other-keys)
+    (apply #'apply-djula-template args)))
+
+(defun default-outfile-name-generator (format &rest infiles)
+  (merge-pathnames (make-pathname :name (format nil "Report-~A" (pathname-name (first infiles)))
+				  :type (case format (wml "docx") (html "html")))
+		   (first infiles)))
+
+(defparameter *outfile-name-generator* #'default-outfile-name-generator)
+
+(defparameter *format* nil)
 
 (defun report (&key infiles outfile arguments template
-		 commentsp footnotesp endnotesp highlightingp (revisionsp t) square-brackets-p)
-  (let* ((infiles (alexandria:ensure-list infiles))
+		 commentsp footnotesp endnotesp highlightingp (revisionsp t) square-brackets-p
+		 (format 'wml))
+  (let* ((*format* format)
+	 (infiles (alexandria:ensure-list infiles))
 	 (template-arguments
 	   (append
 	    (list :files
@@ -491,8 +517,95 @@
 		   :revisionsp revisionsp
 		   :square-brackets-p square-brackets-p))
 	    arguments))
-	 (outfile (or outfile (merge-pathnames (format nil "~A-com" (pathname-name (first infiles)))
-					       (first infiles)))))
-    (apply-docxdjula-template :template-arguments template-arguments
-			      :template template
-			      :outfile outfile)))
+	 (outfile (or outfile (apply *outfile-name-generator* format infiles))))
+    (apply-template format :template-arguments template-arguments
+			   :template template
+			   :outfile outfile)))
+
+(lquery:define-lquery-function run->html (run)
+  (run->html run))
+
+(defun run->html (run)
+  (let* ((rpr (docxplora:get-first-element-by-tag-name run "w:rPr"))
+	 (classes
+	   (when rpr
+	     (loop for prop across (plump:children rpr)
+		   collecting (prop->class prop) into names
+		   do (plump:remove-child prop)
+		   finally (return (serapeum:string-join (remove-duplicates names :test #'equal) #\Space)))))
+	 (text (docxplora::to-text run)))
+    (loop for child across (plump:children run)
+	  do (plump:remove-child child))
+    (setf (plump:tag-name run) "span")
+    (unless (alexandria:emptyp classes)
+      (setf (plump:attribute run "class") classes))
+    (plump:make-text-node run text)
+    run))
+
+(defun prop->class (prop)
+  (serapeum:string-case (plump:tag-name prop)
+    (("w:b" "w:bCs") "b")
+    ("w:caps" "caps")
+    ("w:dstrike" "dstrike")
+    ("w:em" (serapeum:string-case (plump:attribute prop "w:val")
+	      ("circle" "em-circle")
+	      ("comma" "em-comma")
+	      ("dot" "em-dot")
+	      ("none" "em-none")
+	      ("underDot" "em-underdot")))
+    (("w:i" "w:iCs") "i")
+    ("w:position" (let ((val (plump:attribute prop "w:val")))
+		  (format nil "position-~A" val))) ;; FIXME
+    ("w:smallCaps" "smallcaps")
+    ("w:strike" "strike")
+    ("w:u" (let ((val (plump:attribute prop "w:val")))
+	     (cond
+	       ((serapeum:string^= "dash" val)
+		"u-dashed")
+	       ((serapeum:string^= "dot" val)
+		"u-dotted")
+	       ((serapeum:string^= "wav" val)
+		"u-wavy")
+	       ((string= "double" val)
+		"u-double")
+	       ((string= "none" val)
+		nil)
+	       (t
+		"u-solid")))) ;; FIXME words, thick etc.
+    ("w:rStyle" (serapeum:string-case (plump:attribute prop "w:val")
+		  ("IPCInsertion" "ipc-insertion")
+		  ("IPCDeletion" "ipc-deletion")
+		  ("IPCMoveTo" "ipc-moveto")
+		  ("IPCMoveFrom" "ipc-movefrom")
+		  (t "")))
+    ("w:vertAlign" (serapeum:string-case (plump:attribute prop "w:val")
+		     ("subscript" "vertalign-subscript")
+		     ("superscript" "vertalign-superscript")))
+    ("w:highlight" (let ((val (plump:attribute prop "w:val")))
+		     (format nil "highlight-~A" val)))))
+
+(defgeneric process-paragraph-for-format (format paragraph)
+  (:method ((format (eql 'wml)) paragraph)
+    (plump:serialize paragraph nil))
+  (:method ((format (eql 'html)) paragraph)
+    (lquery:with-master-document (paragraph)
+      (lquery:$
+	"w::r" (run->html)))
+    (serapeum:string-replace-all
+     "w:p>"
+     (plump:serialize paragraph nil)
+     "p>")))
+
+(defgeneric process-annotation-for-format (format annotation)
+  (:method ((format (eql 'wml)) annotation)
+    (if annotation
+	(plump:serialize annotation nil)
+	(plump:serialize (blank-cell) nil)))
+  (:method ((format (eql 'html)) annotation)
+    (if annotation
+	(serapeum:string-replace-all
+	 "w:tc>"
+	 (process-paragraph-for-format 'html annotation)
+	 "td>")
+	"<td/>")))
+
