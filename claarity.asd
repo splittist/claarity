@@ -3,7 +3,7 @@
 |#
 
 (asdf:defsystem claarity
-  :version "0.0.1"
+  :version "0.0.2"
   :license "AGPL3.0"
   :author "John Q. Splittist <splittist@splittist.com>"
   :maintainer "John Q. Splittist <splittist@splittist.com>"
@@ -13,7 +13,9 @@
   :source-control (:git "https://github.com/splittist/claarity.git")
   :serial T
   :components ((:file "package")
-               (:file "claarity"))
+               (:file "claarity")
+	       (:file "html")
+	       (:file "sml"))
   :depends-on (#:alexandria
                #:serapeum
                #:uiop
