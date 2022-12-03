@@ -143,10 +143,24 @@
 (defmethod apply-template ((format (eql 'sml)) &key template-arguments template outfile &allow-other-keys)
   (let* ((we (sml::make-workbook-editor template))
 	 (sst (sml::workbook-editor-sst we))
-	 (ws (sml::edit-worksheet we "Data"))
-	 (table-entries (getf template-arguments :files)))
-    (sml::write-array ws 3 2 (build-array table-entries)) ; FIXME Update Table size
-    (update-string-table sst template-arguments)
+	 (table-name (or (getf template-arguments :table-name) "DataTable")))
+    (multiple-value-bind (table worksheet)
+	(sml::find-table-by-name (sml::workbook-editor-document we) table-name)
+      (when (null table)
+	(error "No such table named ~A in ~A" table-name template))
+      (let ((table-element (docxplora:find-child/tag (opc:xml-root table) "table")))
+	(update-string-table sst template-arguments)
+	(let* ((ws (sml::edit-worksheet we (sml::worksheet-name worksheet)))
+	       (table-entries (getf template-arguments :files))
+	       (array (build-array table-entries))
+	       (array-rows (array-dimension array 0)))
+	  (multiple-value-bind (start-row start-col end-row end-col)
+	      (sml::decode-a1-range (plump:attribute table-element "ref"))
+	    (sml::write-array ws (1+ start-row) start-col array)
+	    (setf (plump:attribute table-element "ref") (sml::encode-a1-range start-row start-col
+									      (1- (+ end-row array-rows)) end-col))
+	    ;; FIXME update autoFilter ref (although it doesn't seem to matter)
+	    ))))
     (sml::write-workbook we outfile)))
 
 ;;; vrbl substitution
