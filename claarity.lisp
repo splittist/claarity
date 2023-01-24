@@ -430,9 +430,9 @@
                     :annotation (process-annotation-for-format *format* (third p)))
               arguments)))))
 
-(defun collect-template-arguments-for-file (file &rest items
-					         &key revisionsp commentsp footnotesp endnotesp
-					              highlightingp square-brackets-p)
+(defun collect-item-entries-for-file (file &rest items
+					   &key revisionsp commentsp footnotesp endnotesp
+					     highlightingp square-brackets-p)
   (let* ((document (docxplora:open-document file))
 	 (md (docxplora:main-document document))
 	 (fn (docxplora:footnotes document))
@@ -449,9 +449,13 @@
 		 appending (apply #'extract-items-of-interest-from-part hd document items)))
 	 (ft-entries
 	   (loop for ft in fts
-		 appending (apply #'extract-items-of-interest-from-part ft document items)))
-	 (item-entries (append md-entries fn-entries en-entries hd-entries ft-entries)))
-    (item-entries-to-arguments item-entries)))
+		 appending (apply #'extract-items-of-interest-from-part ft document items))))
+    (append md-entries fn-entries en-entries hd-entries ft-entries)))
+
+(defun collect-template-arguments-for-file (file &rest items
+					         &key revisionsp commentsp footnotesp endnotesp
+					              highlightingp square-brackets-p)
+  (item-entries-to-arguments (apply #'collect-item-entries-for-file file items)))
 
 (defun collect-template-arguments (infiles &rest items
 				           &key revisionsp commentsp footnotesp endnotesp
